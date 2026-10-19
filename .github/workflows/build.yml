@@ -1,0 +1,87 @@
+name: Build FrozenSCDiscord.dylib
+on:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: Build FrozenSCDiscord.dylib
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          path: main
+      - name: Install Dependencies
+        run: brew install make ldid
+      - name: Set PATH environment variables
+        run: |
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
+      - name: Cache Theos
+        id: theos
+        uses: actions/cache@v5.0.3
+        env:
+          cache-name: theos_cache_344ee59
+        with:
+          path: theos/
+          key: ${{ env.cache-name }}
+          restore-keys: ${{ env.cache-name }}
+      - name: Setup Theos
+        if: steps.theos.outputs.cache-hit != 'true'
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: theos/theos
+          ref: 344ee5925df036dbd1312b783ad5a00d153c2445
+          path: theos
+          submodules: recursive
+      - name: Download iOS SDK
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout
+          mv *.sdk $THEOS/sdks
+      - name: Inject secrets
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          DISCORD_APP_ID: ${{ secrets.DISCORD_APP_ID }}
+          NEXTCLOUD_WEBDAV_URL: ${{ secrets.NEXTCLOUD_WEBDAV_URL }}
+          NEXTCLOUD_USER: ${{ secrets.NEXTCLOUD_USER }}
+          NEXTCLOUD_PASS: ${{ secrets.NEXTCLOUD_PASS }}
+          NEXTCLOUD_PUBLIC_URL: ${{ secrets.NEXTCLOUD_PUBLIC_URL }}
+        run: |
+          # perl reads the values from the environment, so characters like & | / in them stay as they are
+          for name in DISCORD_TOKEN DISCORD_APP_ID NEXTCLOUD_WEBDAV_URL NEXTCLOUD_USER NEXTCLOUD_PASS NEXTCLOUD_PUBLIC_URL; do
+            NAME="$name" perl -pi -e 's/__\Q$ENV{NAME}\E__/$ENV{$ENV{NAME}}/g' main/Source/DiscordRPC.x
+          done
+      - name: Build dylib
+        run: |
+          cd main
+          make clean all DEBUG=0 FINALPACKAGE=1
+          DYLIB="$(find .theos/obj -name 'FrozenSCDiscord.dylib' -not -path '*/arm64*/*' | head -n 1)"
+          [ -n "$DYLIB" ] || DYLIB="$(find .theos/obj -name 'FrozenSCDiscord.dylib' | head -n 1)"
+          cp "$DYLIB" "$GITHUB_WORKSPACE/FrozenSCDiscord.dylib"
+      - name: Check dylib
+        run: |
+          lipo -info FrozenSCDiscord.dylib
+          otool -L FrozenSCDiscord.dylib
+          # Must load next to FrozenSC's dylib without a hooking framework
+          if otool -L FrozenSCDiscord.dylib | grep -qiE 'substrate|ellekit|libhooker'; then
+            echo "::error::The dylib links a hooking framework, it would not load in a sideloaded app"
+            exit 1
+          fi
+      - name: Create Release
+        # Draft: only you can see it. The dylib has your secrets built in, so don't publish it.
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          name: FrozenSCDiscord (${{ github.run_number }})
+          tag_name: build-${{ github.run_number }}
+          files: FrozenSCDiscord.dylib
+          draft: true
+      - name: Output Release URL
+        run: echo "::notice::Draft release with FrozenSCDiscord.dylib at https://github.com/${{ github.repository }}/releases"
