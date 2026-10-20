@@ -157,6 +157,20 @@ static void FrozenSCStoreAssetKey(NSString *trackKey, NSString *assetKey) {
     [[NSUserDefaults standardUserDefaults] setObject:cache forKey:kAssetCacheDefaultsKey];
 }
 
+// SoundCloud link for the song: its search page, which lists the song first. The now-playing info
+// has no link to the song itself.
+static NSString *FrozenSCSongURL(NSString *title, NSString *artist) {
+    NSString *query = [[NSString stringWithFormat:@"%@ %@", title ?: @"", artist ?: @""]
+                       stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!query.length)
+        return nil;
+    NSMutableCharacterSet *allowed = [[NSCharacterSet URLQueryAllowedCharacterSet] mutableCopy];
+    [allowed removeCharactersInString:@"&+=#?/"];
+    NSString *encoded = [query stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    NSString *url = [@"https://soundcloud.com/search/sounds?q=" stringByAppendingString:encoded ?: @""];
+    return url.length <= 512 ? url : nil; // Discord's limit for button links
+}
+
 #pragma mark - Gateway client
 
 @interface FrozenSCDiscordGateway : NSObject <NSURLSessionWebSocketDelegate>
@@ -387,6 +401,13 @@ static void FrozenSCStoreAssetKey(NSString *trackKey, NSString *assetKey) {
             assets[@"large_text"] = album;
         }
         activity[@"assets"] = assets;
+    }
+
+    // "Play on SoundCloud" button (others see it, Discord never shows your own buttons to you)
+    NSString *songURL = FrozenSCSongURL(title, artist);
+    if (songURL) {
+        activity[@"buttons"] = @[ @"Play on SoundCloud" ];
+        activity[@"metadata"] = @{ @"button_urls": @[ songURL ] };
     }
 
     [self send:@{
