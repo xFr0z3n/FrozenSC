@@ -1,10 +1,10 @@
 # FrozenSC Discord RPC
 
-Discord Rich Presence for SoundCloud, as a second dylib next to FrozenSC's.
+Discord Rich Presence for SoundCloud, as a second dylib next to NexaSC
 
 It shows what you're playing on SoundCloud as your Discord status (song, artist, progress and
-optionally the cover art) and adds a **Discord RPC** entry to FrozenSC's settings
-(long-press in the tab bar → settings).
+optionally the cover art) and adds a **Discord RPC** entry to the settings
+(long-press on the home button and scroll down).
 
 ## Build
 
