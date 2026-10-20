@@ -70,8 +70,9 @@ jobs:
         run: |
           lipo -info FrozenSCDiscord.dylib
           otool -L FrozenSCDiscord.dylib
-          # Must load next to FrozenSC's dylib without a hooking framework
-          if otool -L FrozenSCDiscord.dylib | grep -qiE 'substrate|ellekit|libhooker'; then
+          # Must load next to FrozenSC's dylib without a hooking framework. The dylib's own
+          # name (/Library/MobileSubstrate/DynamicLibraries/FrozenSCDiscord.dylib) is skipped
+          if otool -L FrozenSCDiscord.dylib | grep -v 'FrozenSCDiscord.dylib' | grep -qiE 'substrate|ellekit|libhooker'; then
             echo "::error::The dylib links a hooking framework, it would not load in a sideloaded app"
             exit 1
           fi
