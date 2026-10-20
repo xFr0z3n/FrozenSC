@@ -101,6 +101,9 @@ static NSString *gLastTrackKey = nil;
 static NSInteger gClearToken = 0;
 static NSInteger gArtToken = 0;   // debounce token for artwork uploads
 static UIImage *gPendingArtwork = nil;
+static NSString *gArtTrackKey = nil;         // song whose cover is being uploaded / registered
+static NSString *gArtFailedKey = nil;        // song whose last attempt failed
+static NSTimeInterval gArtRetryAfter = 0;    // ...and when it may be tried again
 
 static void FrozenSCPushPresence(void);
 static NSTimeInterval gLastPushTime = 0; // last update sent to Discord
@@ -560,26 +563,45 @@ static void FrozenSCRegisterExternalAsset(NSString *imageURL, void (^completion)
 
 // Debounced artwork resolution: only fires after the user stops skipping for ~800ms,
 // so flying through tracks doesn't flood Nextcloud + Discord's external-assets endpoint.
+// One attempt per song: SoundCloud updates the now-playing info many times while a song plays,
+// and each update must not restart (and so discard) the cover already on its way.
 static void FrozenSCScheduleArtwork(UIImage *artwork, NSString *trackKey) {
     if (!artwork || !FrozenSCDiscordArtworkReady()) return;
-    gPendingArtwork = artwork;
+    gPendingArtwork = artwork; // the newest image is the one uploaded when the wait is over
+    if ([gArtTrackKey isEqualToString:trackKey])
+        return; // already on its way for this song
+    if ([gArtFailedKey isEqualToString:trackKey] && [[NSDate date] timeIntervalSince1970] < gArtRetryAfter)
+        return; // this song's last attempt failed a moment ago
+    gArtTrackKey = trackKey;
     NSInteger myToken = ++gArtToken;
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         // Bail if another skip happened since, or we've moved off this track
-        if (myToken != gArtToken) return;
-        if (![gLastTrackKey isEqualToString:trackKey]) return;
+        if (myToken != gArtToken || ![gLastTrackKey isEqualToString:trackKey]) {
+            if (myToken == gArtToken) // a newer request owns the marker otherwise
+                gArtTrackKey = nil;
+            return;
+        }
 
         UIImage *img = gPendingArtwork;
-        if (!img) return;
+        if (!img) {
+            gArtTrackKey = nil;
+            return;
+        }
 
         FrozenSCResolveArtwork(img, trackKey, ^(NSString *assetKey) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (!assetKey) return;
+                if ([gArtTrackKey isEqualToString:trackKey])
+                    gArtTrackKey = nil;
+                if (!assetKey) {
+                    gArtFailedKey = trackKey;
+                    gArtRetryAfter = [[NSDate date] timeIntervalSince1970] + 30;
+                    return;
+                }
                 FrozenSCStoreAssetKey(trackKey, assetKey); // cache even if we've moved on — replays get instant art
-                // Only apply if this is still both the newest request AND the current track
-                if (myToken == gArtToken && [gLastTrackKey isEqualToString:trackKey]) {
+                // Shown while that song is still the one playing
+                if ([gLastTrackKey isEqualToString:trackKey] && gPresenceActive) {
                     gTrackImageKey = assetKey;
                     FrozenSCPushPresence();
                 }
@@ -655,8 +677,13 @@ static void FrozenSCScheduleArtwork(UIImage *artwork, NSString *trackKey) {
                 FrozenSCScheduleArtwork(artworkImage, trackKey); // debounced art only when needed
             }
         } else {
-            if (!gTrackImageKey && artworkImage) {
-                FrozenSCScheduleArtwork(artworkImage, trackKey);
+            if (!gTrackImageKey) {
+                // A cover saved in the meantime (an earlier upload of this song) shows right away
+                gTrackImageKey = FrozenSCCachedAssetKey(trackKey);
+                if (gTrackImageKey)
+                    FrozenSCPushPresence();
+                else if (artworkImage)
+                    FrozenSCScheduleArtwork(artworkImage, trackKey);
             }
             BOOL changed = NO;
             if (length > 0 && fabs(length - gTrackDuration) > 1.0) {
