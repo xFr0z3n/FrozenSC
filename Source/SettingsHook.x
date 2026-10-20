@@ -10,6 +10,10 @@
 // natively. Taps dispatch on item["type"] and an unknown type does nothing there, so we catch ours
 // in didSelect and open the Discord RPC screen.
 
+@interface NexaSCSettingsViewController : UIViewController
+@property (nonatomic, strong) NSArray *settingsSections;
+@end
+
 static NSString *const kFrozenSCDiscordRowType = @"frozensc_discord_rpc";
 
 // Same {title, icon, type} shape as the built-in action rows ("Support Me", "Contact Me")
@@ -47,7 +51,7 @@ static UIViewController *FrozenSCTopViewController(UIViewController *fallback) {
 - (void)setupSettingsData {
     %orig;
 
-    NSArray *sections = [self valueForKey:@"settingsSections"];
+    NSArray *sections = self.settingsSections;
     if (![sections isKindOfClass:[NSArray class]])
         return;
 
@@ -63,11 +67,11 @@ static UIViewController *FrozenSCTopViewController(UIViewController *fallback) {
 
     NSMutableArray *updated = [sections mutableCopy];
     [updated addObject:@[ FrozenSCDiscordRowItem() ]];
-    [self setValue:[updated copy] forKey:@"settingsSections"];
+    self.settingsSections = [updated copy];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSArray *sections = [self valueForKey:@"settingsSections"];
+    NSArray *sections = self.settingsSections;
     NSDictionary *item = nil;
     if ([sections isKindOfClass:[NSArray class]] && indexPath.section < (NSInteger)sections.count) {
         id section = sections[indexPath.section];
